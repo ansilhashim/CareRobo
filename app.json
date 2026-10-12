@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "CareRobo",
+    "slug": "carerobo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A2463"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.carerobo.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png",
+        "backgroundColor": "#0A2463"
+      },
+      "package": "com.carerobo.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/android-icon-foreground.png",
+          "color": "#0A2463",
+          "sounds": []
+        }
+      ]
+    ],
+    "scheme": "carerobo",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
