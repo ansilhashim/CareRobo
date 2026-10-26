@@ -1,844 +1,727 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
-  ScrollView,
   StyleSheet,
   TouchableOpacity,
-  Platform,
   Alert,
+  Animated,
+  Easing,
+  StatusBar,
 } from 'react-native';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import Colors from '../constants/colors';
 
-type MovementStatus = 'Idle' | 'Moving Forward' | 'Moving Backward' | 'Turning Left' | 'Turning Right' | 'Paused' | 'Emergency Stop';
-type HardwareMode = 'demo' | 'hardware';
+type MovementStatus = 'IDLE' | 'FORWARD' | 'BACKWARD' | 'LEFT' | 'RIGHT' | 'PAUSED' | 'E-STOP';
 
-export default function RobotControlScreen() {
-  const [mode, setMode] = useState<HardwareMode>('demo');
-  const [movement, setMovement] = useState<MovementStatus>('Idle');
-  const [speed, setSpeed] = useState<number>(1.0); // m/s
-  const [isPaused, setIsPaused] = useState<boolean>(false);
-  const [eStopTriggered, setEStopTriggered] = useState<boolean>(false);
-  const [lastCommandTime, setLastCommandTime] = useState<string>('Just now');
-  const [batteryLevel] = useState<number>(94);
+// ── Radar Component ──────────────────────────────────────────────────────
+function RadarDisplay({ movement, distance }: { movement: MovementStatus; distance: number }) {
+  // useMemo avoids the react-hooks/refs lint error (no .current access during render)
+  const sweepAnim = useMemo(() => new Animated.Value(0), []);
+  const pingAnim  = useMemo(() => new Animated.Value(0), []);
+  const sweepRotate = useMemo(
+    () => sweepAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }),
+    [sweepAnim]
+  );
 
-  // Auto-reset movement in demo mode after momentary action
   useEffect(() => {
-    if (movement !== 'Idle' && movement !== 'Emergency Stop' && movement !== 'Paused') {
-      const timer = setTimeout(() => {
-        if (!eStopTriggered && !isPaused) {
-          setMovement('Idle');
-        }
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [movement, eStopTriggered, isPaused]);
+    Animated.loop(
+      Animated.timing(sweepAnim, { toValue: 1, duration: 2400, easing: Easing.linear, useNativeDriver: true })
+    ).start();
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pingAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        Animated.timing(pingAnim, { toValue: 0, duration: 700, useNativeDriver: true }),
+      ])
+    ).start();
+  }, [sweepAnim, pingAnim]);
 
-  const handleDirection = (dir: 'Forward' | 'Backward' | 'Left' | 'Right') => {
-    if (eStopTriggered) {
-      Alert.alert(
-        'Emergency Stop Active',
-        'Please release the Emergency Stop latch before issuing movement commands.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    if (isPaused) {
-      Alert.alert(
-        'Robot Paused',
-        'Resume the robot to allow manual control commands.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
+  const statusColor =
+    movement === 'E-STOP' ? Colors.red
+    : movement === 'PAUSED' ? Colors.orange
+    : movement === 'IDLE' ? Colors.teal
+    : Colors.green;
 
-    const map: Record<string, MovementStatus> = {
-      Forward: 'Moving Forward',
-      Backward: 'Moving Backward',
-      Left: 'Turning Left',
-      Right: 'Turning Right',
-    };
-    setMovement(map[dir]);
-    setLastCommandTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  };
+  const statusLabel =
+    movement === 'IDLE'     ? '● IDLE'
+    : movement === 'FORWARD'  ? '▲ FWD'
+    : movement === 'BACKWARD' ? '▼ REV'
+    : movement === 'LEFT'     ? '◄ LEFT'
+    : movement === 'RIGHT'    ? '► RIGHT'
+    : movement === 'PAUSED'   ? '⏸ PAUSED'
+    : '🚨 E-STOP';
 
-  const handleStop = () => {
-    if (eStopTriggered) return;
-    setMovement('Idle');
-    setLastCommandTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-  };
-
-  const handleTogglePause = () => {
-    if (eStopTriggered) return;
-    if (isPaused) {
-      setIsPaused(false);
-      setMovement('Idle');
-    } else {
-      setIsPaused(true);
-      setMovement('Paused');
-    }
-  };
-
-  const handleEmergencyStop = () => {
-    if (!eStopTriggered) {
-      setEStopTriggered(true);
-      setMovement('Emergency Stop');
-      Alert.alert(
-        '🚨 EMERGENCY STOP ACTIVATED',
-        'CareBot motor power cut immediately. All active navigation stopped.',
-        [{ text: 'Acknowledged', style: 'destructive' }]
-      );
-    } else {
-      // Release
-      setEStopTriggered(false);
-      setMovement('Idle');
-      Alert.alert('E-Stop Released', 'CareBot systems re-engaged and in Standby.');
-    }
-  };
-
-  const adjustSpeed = (delta: number) => {
-    setSpeed((prev) => {
-      const next = Math.round((prev + delta) * 10) / 10;
-      if (next < 0.5) return 0.5;
-      if (next > 2.5) return 2.5;
-      return next;
-    });
-  };
+  const pingBottom = Math.min(75, (distance / 400) * 75);
 
   return (
-    <SafeAreaView style={styles.safeArea} edges={['bottom']}>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Hardware vs Demo Mode Banner */}
-        <View style={styles.modeCard}>
-          <View style={styles.modeCardHeader}>
-            <View style={styles.modeTitleRow}>
-              <Ionicons
-                name={mode === 'hardware' ? 'radio' : 'laptop-outline'}
-                size={20}
-                color={mode === 'hardware' ? Colors.green : Colors.teal}
-              />
-              <Text style={styles.modeTitle}>
-                {mode === 'hardware' ? 'Real Hardware Mode' : 'Interactive Demo Mode'}
-              </Text>
-            </View>
-            <View style={styles.modeToggle}>
-              <TouchableOpacity
-                style={[styles.modePill, mode === 'demo' && styles.modePillActive]}
-                onPress={() => setMode('demo')}
-              >
-                <Text style={[styles.modePillText, mode === 'demo' && styles.modePillTextActive]}>
-                  Demo
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modePill, mode === 'hardware' && styles.modePillActiveHardware]}
-                onPress={() => {
-                  setMode('hardware');
-                  Alert.alert(
-                    'Real Hardware Standby',
-                    'CareBot ROS2 WebSocket / BLE connection is searching for hardware on local subnet (192.168.1.145). Control commands will be dispatched over ROS2 cmd_vel.',
-                    [{ text: 'Understood' }]
-                  );
-                }}
-              >
-                <Text
-                  style={[
-                    styles.modePillText,
-                    mode === 'hardware' && styles.modePillTextActiveHardware,
-                  ]}
-                >
-                  Hardware
-                </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          <Text style={styles.modeDesc}>
-            {mode === 'demo'
-              ? 'Simulating CareBot motor controllers. Safe for UI testing without physical robot motion.'
-              : 'Connected to CareBot ROS2 Controller. Real physical motors respond to inputs.'}
-          </Text>
-        </View>
-
-        {/* Robot Telemetry & Status HUD */}
-        <View style={styles.hudCard}>
-          <View style={styles.hudTopRow}>
-            <View style={styles.robotIdBadge}>
-              <Ionicons name="hardware-chip" size={16} color={Colors.teal} />
-              <Text style={styles.robotIdText}>CareBot Alpha-1 (CRB-9942)</Text>
-            </View>
-            <TouchableOpacity
-              style={styles.batteryBadge}
-              onPress={() => router.push('/battery-monitor')}
-            >
-              <Ionicons name="battery-charging" size={16} color={Colors.green} />
-              <Text style={styles.batteryText}>{batteryLevel}%</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.statusBox}>
-            <Text style={styles.statusLabel}>CURRENT STATUS</Text>
-            <View style={styles.statusIndicatorRow}>
-              <View
-                style={[
-                  styles.statusDot,
-                  eStopTriggered
-                    ? styles.statusDotCritical
-                    : movement !== 'Idle' && movement !== 'Paused'
-                    ? styles.statusDotActive
-                    : isPaused
-                    ? styles.statusDotPaused
-                    : styles.statusDotIdle,
-                ]}
-              />
-              <Text
-                style={[
-                  styles.statusMainText,
-                  eStopTriggered && { color: Colors.red },
-                ]}
-              >
-                {movement}
-              </Text>
-            </View>
-            <Text style={styles.statusMeta}>
-              Speed: {speed} m/s · Last cmd: {lastCommandTime}
-            </Text>
-          </View>
-        </View>
-
-        {/* Directional D-Pad Controller */}
-        <View style={styles.dpadSection}>
-          <Text style={styles.sectionHeader}>Motion Controls</Text>
-
-          <View style={styles.dpadContainer}>
-            {/* Forward Button */}
-            <TouchableOpacity
-              style={[
-                styles.dpadBtn,
-                styles.dpadUp,
-                movement === 'Moving Forward' && styles.dpadBtnActive,
-              ]}
-              onPress={() => handleDirection('Forward')}
-              disabled={eStopTriggered}
-              accessibilityLabel="Move Forward"
-            >
-              <Ionicons name="chevron-up" size={36} color={Colors.primary} />
-            </TouchableOpacity>
-
-            {/* Middle Row: Left, Center Stop, Right */}
-            <View style={styles.dpadMiddleRow}>
-              <TouchableOpacity
-                style={[
-                  styles.dpadBtn,
-                  styles.dpadLeft,
-                  movement === 'Turning Left' && styles.dpadBtnActive,
-                ]}
-                onPress={() => handleDirection('Left')}
-                disabled={eStopTriggered}
-                accessibilityLabel="Turn Left"
-              >
-                <Ionicons name="chevron-back" size={36} color={Colors.primary} />
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.dpadStopBtn,
-                  movement === 'Idle' && styles.dpadStopBtnActive,
-                ]}
-                onPress={handleStop}
-                disabled={eStopTriggered}
-                accessibilityLabel="Stop Motion"
-              >
-                <Ionicons name="hand-right" size={26} color={Colors.white} />
-                <Text style={styles.stopBtnText}>STOP</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={[
-                  styles.dpadBtn,
-                  styles.dpadRight,
-                  movement === 'Turning Right' && styles.dpadBtnActive,
-                ]}
-                onPress={() => handleDirection('Right')}
-                disabled={eStopTriggered}
-                accessibilityLabel="Turn Right"
-              >
-                <Ionicons name="chevron-forward" size={36} color={Colors.primary} />
-              </TouchableOpacity>
-            </View>
-
-            {/* Backward Button */}
-            <TouchableOpacity
-              style={[
-                styles.dpadBtn,
-                styles.dpadDown,
-                movement === 'Moving Backward' && styles.dpadBtnActive,
-              ]}
-              onPress={() => handleDirection('Backward')}
-              disabled={eStopTriggered}
-              accessibilityLabel="Move Backward"
-            >
-              <Ionicons name="chevron-down" size={36} color={Colors.primary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Speed Adjustment Controls */}
-        <View style={styles.speedCard}>
-          <View style={styles.speedHeader}>
-            <View style={styles.speedTitleRow}>
-              <Ionicons name="speedometer-outline" size={20} color={Colors.teal} />
-              <Text style={styles.speedTitle}>Linear Speed Velocity</Text>
-            </View>
-            <Text style={styles.speedValue}>{speed.toFixed(1)} m/s</Text>
-          </View>
-
-          <View style={styles.speedControlsRow}>
-            <TouchableOpacity
-              style={[styles.speedBtn, speed <= 0.5 && styles.speedBtnDisabled]}
-              onPress={() => adjustSpeed(-0.2)}
-              disabled={speed <= 0.5}
-            >
-              <Ionicons name="remove" size={20} color={Colors.textPrimary} />
-            </TouchableOpacity>
-
-            {/* Speed Visual Indicator Bar */}
-            <View style={styles.speedTrack}>
-              <View
-                style={[
-                  styles.speedFill,
-                  { width: `${((speed - 0.5) / 2.0) * 100}%` },
-                ]}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={[styles.speedBtn, speed >= 2.5 && styles.speedBtnDisabled]}
-              onPress={() => adjustSpeed(0.2)}
-              disabled={speed >= 2.5}
-            >
-              <Ionicons name="add" size={20} color={Colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.speedPresetsRow}>
-            {[
-              { label: 'Care (0.6)', val: 0.6 },
-              { label: 'Normal (1.0)', val: 1.0 },
-              { label: 'Rapid (1.8)', val: 1.8 },
-            ].map((preset) => (
-              <TouchableOpacity
-                key={preset.label}
-                style={[
-                  styles.speedPresetPill,
-                  Math.abs(speed - preset.val) < 0.1 && styles.speedPresetPillActive,
-                ]}
-                onPress={() => setSpeed(preset.val)}
-              >
-                <Text
-                  style={[
-                    styles.speedPresetText,
-                    Math.abs(speed - preset.val) < 0.1 && styles.speedPresetTextActive,
-                  ]}
-                >
-                  {preset.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        {/* Primary Operational Controls: Pause/Resume & EMERGENCY STOP */}
-        <View style={styles.opsSection}>
-          <TouchableOpacity
-            style={[styles.pauseBtn, isPaused && styles.resumeBtn]}
-            onPress={handleTogglePause}
-            disabled={eStopTriggered}
-          >
-            <Ionicons
-              name={isPaused ? 'play' : 'pause'}
-              size={20}
-              color={Colors.white}
-            />
-            <Text style={styles.pauseBtnText}>
-              {isPaused ? 'Resume Robot' : 'Pause Routine'}
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.eStopBtn,
-              eStopTriggered && styles.eStopBtnTriggered,
-            ]}
-            onPress={handleEmergencyStop}
-            activeOpacity={0.8}
-            accessibilityLabel="Emergency Stop"
-          >
-            <Ionicons
-              name={eStopTriggered ? 'lock-closed' : 'warning'}
-              size={24}
-              color={Colors.white}
-            />
-            <Text style={styles.eStopBtnText}>
-              {eStopTriggered ? 'RELEASE E-STOP LATCH' : 'EMERGENCY STOP (E-STOP)'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Quick Hub Navigation Bar */}
-        <View style={styles.hubGrid}>
-          <TouchableOpacity
-            style={styles.hubCard}
-            onPress={() => router.push('/robot-location')}
-          >
-            <View style={[styles.hubIconBg, { backgroundColor: Colors.teal + '20' }]}>
-              <Ionicons name="map-outline" size={22} color={Colors.teal} />
-            </View>
-            <Text style={styles.hubTitle}>Live Map</Text>
-            <Text style={styles.hubSubtitle}>GPS & Indoor Floor</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.hubCard}
-            onPress={() => router.push('/robot-tasks')}
-          >
-            <View style={[styles.hubIconBg, { backgroundColor: Colors.green + '20' }]}>
-              <Ionicons name="file-tray-full-outline" size={22} color={Colors.green} />
-            </View>
-            <Text style={styles.hubTitle}>Tasks</Text>
-            <Text style={styles.hubSubtitle}>Delivery & Escorts</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.hubCard}
-            onPress={() => router.push('/battery-monitor')}
-          >
-            <View style={[styles.hubIconBg, { backgroundColor: Colors.orange + '20' }]}>
-              <Ionicons name="battery-charging-outline" size={22} color={Colors.orange} />
-            </View>
-            <Text style={styles.hubTitle}>Battery</Text>
-            <Text style={styles.hubSubtitle}>{batteryLevel}% Health</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={styles.hubCard}
-            onPress={() => router.push('/robot-settings')}
-          >
-            <View style={[styles.hubIconBg, { backgroundColor: Colors.primaryLight + '20' }]}>
-              <Ionicons name="settings-outline" size={22} color={Colors.primaryLight} />
-            </View>
-            <Text style={styles.hubTitle}>Settings</Text>
-            <Text style={styles.hubSubtitle}>Network & Speeds</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={{ height: 30 }} />
-      </ScrollView>
-    </SafeAreaView>
+    <View style={radarS.wrap}>
+      <Text style={[radarS.statusBadge, { color: statusColor }]}>{statusLabel}</Text>
+      <View style={radarS.circle3} />
+      <View style={radarS.circle2} />
+      <View style={radarS.circle1} />
+      <View style={radarS.crossH} />
+      <View style={radarS.crossV} />
+      <Animated.View style={[radarS.sweepWrap, { transform: [{ rotate: sweepRotate }] }]}>
+        <View style={radarS.sweepArm} />
+      </Animated.View>
+      <Animated.View style={[radarS.ping, { opacity: pingAnim, bottom: `${pingBottom}%` as any }]} />
+      <View style={[radarS.centerDot, { backgroundColor: statusColor }]} />
+      <View style={radarS.distanceWrap}>
+        <Text style={[radarS.distanceValue, { color: statusColor }]}>{distance}</Text>
+        <Text style={radarS.distanceUnit}>cm</Text>
+      </View>
+      <Text style={[radarS.ringLabel, { bottom: '28%', right: '10%' }]}>100</Text>
+      <Text style={[radarS.ringLabel, { bottom: '52%', right: '10%' }]}>200</Text>
+      <Text style={[radarS.ringLabel, { bottom: '76%', right: '10%' }]}>300</Text>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: Colors.background,
+const RADAR_SIZE = 170;
+
+const radarS = StyleSheet.create({
+  wrap: {
+    width: RADAR_SIZE,
+    height: RADAR_SIZE,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
   },
-  container: {
-    flex: 1,
+  statusBadge: {
+    position: 'absolute',
+    top: -22,
+    alignSelf: 'center',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.2,
   },
-  content: {
-    padding: 18,
-    gap: 16,
-  },
-  modeCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 14,
-    padding: 14,
+  circle3: {
+    position: 'absolute',
+    width: RADAR_SIZE,
+    height: RADAR_SIZE,
+    borderRadius: RADAR_SIZE / 2,
     borderWidth: 1,
-    borderColor: Colors.gray100,
+    borderColor: 'rgba(0,180,216,0.22)',
   },
-  modeCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  circle2: {
+    position: 'absolute',
+    width: RADAR_SIZE * 0.66,
+    height: RADAR_SIZE * 0.66,
+    borderRadius: (RADAR_SIZE * 0.66) / 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0,180,216,0.32)',
+  },
+  circle1: {
+    position: 'absolute',
+    width: RADAR_SIZE * 0.34,
+    height: RADAR_SIZE * 0.34,
+    borderRadius: (RADAR_SIZE * 0.34) / 2,
+    borderWidth: 1,
+    borderColor: 'rgba(0,180,216,0.5)',
+  },
+  crossH: { position: 'absolute', width: RADAR_SIZE, height: 1, backgroundColor: 'rgba(0,180,216,0.18)' },
+  crossV: { position: 'absolute', width: 1, height: RADAR_SIZE, backgroundColor: 'rgba(0,180,216,0.18)' },
+  sweepWrap: {
+    position: 'absolute',
+    width: RADAR_SIZE,
+    height: RADAR_SIZE,
     alignItems: 'center',
-    marginBottom: 6,
+    justifyContent: 'center',
   },
-  modeTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  sweepArm: {
+    position: 'absolute',
+    bottom: '50%',
+    left: '50%',
+    width: RADAR_SIZE / 2,
+    height: 2,
+    backgroundColor: 'rgba(6,214,160,0.7)',
+    borderRadius: 1,
   },
-  modeTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-  },
-  modeToggle: {
-    flexDirection: 'row',
-    backgroundColor: Colors.lightGray,
-    borderRadius: 20,
-    padding: 2,
-  },
-  modePill: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 16,
-  },
-  modePillActive: {
-    backgroundColor: Colors.teal,
-  },
-  modePillActiveHardware: {
-    backgroundColor: Colors.green,
-  },
-  modePillText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.gray500,
-  },
-  modePillTextActive: {
-    color: Colors.white,
-  },
-  modePillTextActiveHardware: {
-    color: Colors.white,
-  },
-  modeDesc: {
-    fontSize: 12,
-    color: Colors.gray500,
-    lineHeight: 16,
-  },
-  hudCard: {
-    backgroundColor: Colors.dark,
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
-  hudTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  robotIdBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-  robotIdText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.white,
-  },
-  batteryBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: 'rgba(6,214,160,0.15)',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-  },
-  batteryText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: Colors.green,
-  },
-  statusBox: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 12,
-    padding: 12,
-    alignItems: 'center',
-    gap: 4,
-  },
-  statusLabel: {
-    fontSize: 11,
-    letterSpacing: 1,
-    color: Colors.gray400,
-    fontWeight: '700',
-  },
-  statusIndicatorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  statusDot: {
+  ping: {
+    position: 'absolute',
+    left: '50%',
+    marginLeft: -5,
     width: 10,
     height: 10,
     borderRadius: 5,
+    backgroundColor: Colors.teal,
   },
-  statusDotIdle: { backgroundColor: Colors.teal },
-  statusDotActive: { backgroundColor: Colors.green },
-  statusDotPaused: { backgroundColor: Colors.orange },
-  statusDotCritical: { backgroundColor: Colors.red },
-  statusMainText: {
-    fontSize: 18,
-    fontWeight: '800',
-    color: Colors.white,
+  centerDot: { position: 'absolute', width: 9, height: 9, borderRadius: 5 },
+  distanceWrap: {
+    position: 'absolute',
+    bottom: 4,
+    left: 8,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 2,
   },
-  statusMeta: {
-    fontSize: 12,
-    color: Colors.gray300,
-  },
-  dpadSection: {
-    backgroundColor: Colors.white,
-    borderRadius: 18,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.gray100,
-  },
-  sectionHeader: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: 14,
-  },
-  dpadContainer: {
+  distanceValue: { fontSize: 16, fontWeight: '800' },
+  distanceUnit: { fontSize: 9, color: Colors.gray300, fontWeight: '600' },
+  ringLabel: { position: 'absolute', fontSize: 7, color: 'rgba(0,180,216,0.38)', fontWeight: '600' },
+});
+
+// ── D-Pad Component ──────────────────────────────────────────────────────
+function DPad({ movement, onDir, disabled }: {
+  movement: MovementStatus;
+  onDir: (d: 'FORWARD' | 'BACKWARD' | 'LEFT' | 'RIGHT') => void;
+  disabled: boolean;
+}) {
+  const btnColor = (active: boolean) => active ? Colors.teal : Colors.gray300;
+  return (
+    <View style={dpadS.wrap}>
+      {/* Forward */}
+      <View style={dpadS.row}>
+        <TouchableOpacity
+          style={[dpadS.btn, movement === 'FORWARD' && dpadS.active]}
+          onPress={() => onDir('FORWARD')}
+          disabled={disabled}
+          accessibilityLabel="Forward"
+        >
+          <Ionicons name="chevron-up" size={26} color={btnColor(movement === 'FORWARD')} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Left · Hub · Right */}
+      <View style={dpadS.midRow}>
+        <TouchableOpacity
+          style={[dpadS.btn, movement === 'LEFT' && dpadS.active]}
+          onPress={() => onDir('LEFT')}
+          disabled={disabled}
+          accessibilityLabel="Left"
+        >
+          <Ionicons name="chevron-back" size={26} color={btnColor(movement === 'LEFT')} />
+        </TouchableOpacity>
+
+        <View style={dpadS.hub}>
+          <View style={dpadS.hubDot} />
+        </View>
+
+        <TouchableOpacity
+          style={[dpadS.btn, movement === 'RIGHT' && dpadS.active]}
+          onPress={() => onDir('RIGHT')}
+          disabled={disabled}
+          accessibilityLabel="Right"
+        >
+          <Ionicons name="chevron-forward" size={26} color={btnColor(movement === 'RIGHT')} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Backward */}
+      <View style={dpadS.row}>
+        <TouchableOpacity
+          style={[dpadS.btn, movement === 'BACKWARD' && dpadS.active]}
+          onPress={() => onDir('BACKWARD')}
+          disabled={disabled}
+          accessibilityLabel="Backward"
+        >
+          <Ionicons name="chevron-down" size={26} color={btnColor(movement === 'BACKWARD')} />
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+}
+
+const DPAD_BTN = 54;
+const DPAD_HUB = 38;
+
+const dpadS = StyleSheet.create({
+  wrap: { alignItems: 'center', justifyContent: 'center', gap: 5 },
+  row: {
     alignItems: 'center',
     justifyContent: 'center',
-    width: 250,
-    height: 250,
+    width: DPAD_BTN * 3 + 5 * 2,
   },
-  dpadBtn: {
-    width: 68,
-    height: 68,
-    borderRadius: 34,
-    backgroundColor: Colors.background,
+  midRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btn: {
+    width: DPAD_BTN,
+    height: DPAD_BTN,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1.5,
-    borderColor: Colors.gray200,
+    borderColor: 'rgba(255,255,255,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.08,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
   },
-  dpadBtnActive: {
-    backgroundColor: Colors.tealLight,
+  active: {
+    backgroundColor: 'rgba(0,180,216,0.22)',
     borderColor: Colors.teal,
   },
-  dpadUp: {
-    marginBottom: 6,
+  hub: {
+    width: DPAD_HUB,
+    height: DPAD_HUB,
+    borderRadius: DPAD_HUB / 2,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  dpadDown: {
-    marginTop: 6,
+  hubDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: 'rgba(0,180,216,0.45)' },
+});
+
+// ── Action Buttons (gamepad face buttons) ────────────────────────────────
+function ActionButtons({ onStop, onPause, onHorn, isPaused, eStop, onEStop }: {
+  onStop: () => void;
+  onPause: () => void;
+  onHorn: () => void;
+  isPaused: boolean;
+  eStop: boolean;
+  onEStop: () => void;
+}) {
+  return (
+    <View style={abS.wrap}>
+      {/* Y — Horn (top) */}
+      <TouchableOpacity style={[abS.btn, abS.yellow]} onPress={onHorn} accessibilityLabel="Horn">
+        <Text style={abS.letter}>Y</Text>
+        <Text style={abS.sub}>HORN</Text>
+      </TouchableOpacity>
+
+      {/* X · B (middle row) */}
+      <View style={abS.midRow}>
+        <TouchableOpacity style={[abS.btn, abS.blue]} onPress={onStop} accessibilityLabel="Stop">
+          <Text style={abS.letter}>X</Text>
+          <Text style={abS.sub}>STOP</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[abS.btn, eStop ? abS.eStopOn : abS.red]}
+          onPress={onEStop}
+          accessibilityLabel="Emergency Stop"
+        >
+          <Text style={abS.letter}>B</Text>
+          <Text style={abS.sub}>{eStop ? 'RLSE' : 'SOS'}</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* A — Pause / Resume (bottom) */}
+      <TouchableOpacity
+        style={[abS.btn, isPaused ? abS.resume : abS.green]}
+        onPress={onPause}
+        accessibilityLabel="Pause/Resume"
+      >
+        <Text style={abS.letter}>A</Text>
+        <Text style={abS.sub}>{isPaused ? 'RESM' : 'PAUS'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+const AB_BTN = 52;
+
+const abS = StyleSheet.create({
+  wrap: { alignItems: 'center', gap: 6 },
+  midRow: { flexDirection: 'row', gap: 6, alignItems: 'center', justifyContent: 'center' },
+  btn: {
+    width: AB_BTN,
+    height: AB_BTN,
+    borderRadius: AB_BTN / 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.18)',
   },
-  dpadMiddleRow: {
+  letter: { fontSize: 15, fontWeight: '900', color: Colors.white, lineHeight: 18 },
+  sub: { fontSize: 7, fontWeight: '700', color: 'rgba(255,255,255,0.65)', letterSpacing: 0.5, lineHeight: 9 },
+  yellow:  { backgroundColor: '#B8960C' },
+  blue:    { backgroundColor: Colors.primaryLight },
+  red:     { backgroundColor: Colors.red },
+  green:   { backgroundColor: Colors.greenDark },
+  resume:  { backgroundColor: Colors.tealDark },
+  eStopOn: { backgroundColor: '#7B0000', borderColor: '#FF6666' },
+});
+
+// ── Main Screen ──────────────────────────────────────────────────────────
+export default function RobotControlScreen() {
+  const [movement, setMovement] = useState<MovementStatus>('IDLE');
+  const [isPaused, setIsPaused] = useState(false);
+  const [eStop, setEStop]       = useState(false);
+  const [speed, setSpeed]       = useState(1.0);
+  const [distance, setDistance] = useState(114);
+  const [batteryLevel]          = useState(94);
+  const [latency]               = useState(20);
+
+  // Lock to landscape
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+    };
+  }, []);
+
+  // Auto reset to idle after 3 s
+  useEffect(() => {
+    if (!['IDLE', 'E-STOP', 'PAUSED'].includes(movement)) {
+      const t = setTimeout(() => { if (!eStop && !isPaused) setMovement('IDLE'); }, 3000);
+      return () => clearTimeout(t);
+    }
+  }, [movement, eStop, isPaused]);
+
+  // Simulate sensor distance
+  useEffect(() => {
+    const t = setInterval(() => {
+      setDistance((d) => Math.max(40, Math.min(350, d + Math.round((Math.random() - 0.48) * 12))));
+    }, 800);
+    return () => clearInterval(t);
+  }, []);
+
+  const handleDir = (dir: 'FORWARD' | 'BACKWARD' | 'LEFT' | 'RIGHT') => {
+    if (eStop)    { Alert.alert('E-Stop Active', 'Release E-Stop first.',   [{ text: 'OK' }]); return; }
+    if (isPaused) { Alert.alert('Robot Paused',  'Resume before moving.',   [{ text: 'OK' }]); return; }
+    setMovement(dir);
+  };
+
+  const handleStop  = () => { if (!eStop) setMovement('IDLE'); };
+
+  const handlePause = () => {
+    if (eStop) return;
+    if (isPaused) { setIsPaused(false); setMovement('IDLE'); }
+    else          { setIsPaused(true);  setMovement('PAUSED'); }
+  };
+
+  const handleEStop = () => {
+    if (!eStop) {
+      setEStop(true); setMovement('E-STOP');
+      Alert.alert('🚨 E-STOP ACTIVATED', 'Motor power cut. All motion halted.', [{ text: 'Acknowledged', style: 'destructive' }]);
+    } else {
+      setEStop(false); setMovement('IDLE');
+      Alert.alert('E-Stop Released', 'CareBot back in standby.');
+    }
+  };
+
+  const handleHorn = () => Alert.alert('📢 Horn', 'Beep beep! Clearing path.', [{ text: 'OK' }]);
+
+  const adjustSpeed = (delta: number) =>
+    setSpeed((p) => Math.min(2.5, Math.max(0.5, Math.round((p + delta) * 10) / 10)));
+
+  const speedPct = Math.round(((speed - 0.5) / 2.0) * 100);
+
+  return (
+    <View style={s.root}>
+      <StatusBar hidden />
+
+      {/* ── Top HUD Bar ─────────────────────────────────────────────── */}
+      <View style={s.topBar}>
+        <TouchableOpacity style={s.backBtn} onPress={() => router.back()} accessibilityLabel="Back">
+          <Ionicons name="chevron-back" size={14} color={Colors.gray300} />
+          <Text style={s.backText}>Back</Text>
+        </TouchableOpacity>
+
+        <View style={s.topCenter}>
+          <Text style={s.appTitle}>RoboCare Controller</Text>
+          <Text style={s.appSub}>Manual drive mode · v2.1</Text>
+        </View>
+
+        <View style={s.pillRow}>
+          <View style={[s.pill, { borderColor: Colors.green + '44' }]}>
+            <View style={[s.dot, { backgroundColor: Colors.green }]} />
+            <Text style={[s.pillTxt, { color: Colors.green }]}>Connected</Text>
+          </View>
+
+          <View style={s.pill}>
+            <Ionicons name="timer-outline" size={9} color={Colors.gray300} style={{ marginRight: 2 }} />
+            <Text style={s.pillTxt}>{latency} ms</Text>
+          </View>
+
+          <View style={s.pill}>
+            <Text style={s.pillTxt}>
+              Speed{' '}
+              <Text style={[s.pillTxt, { color: Colors.teal, fontWeight: '800' }]}>{speed.toFixed(1)} m/s</Text>
+            </Text>
+          </View>
+
+          <View style={s.pill}>
+            <Text style={s.pillTxt}>
+              Mode{' '}
+              <Text style={[s.pillTxt, { color: Colors.orange, fontWeight: '800' }]}>Manual</Text>
+            </Text>
+          </View>
+
+          <TouchableOpacity style={s.pill} onPress={() => router.push('/battery-monitor')}>
+            <Ionicons name="battery-charging" size={11} color={Colors.green} />
+            <Text style={[s.pillTxt, { color: Colors.green, fontWeight: '800', marginLeft: 3 }]}>{batteryLevel}%</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* ── Controller Body ──────────────────────────────────────────── */}
+      <View style={s.body}>
+
+        {/* LEFT PANEL ─ D-Pad */}
+        <View style={s.sidePanel}>
+          <Text style={s.panelLabel}>MOVE</Text>
+          <DPad movement={movement} onDir={handleDir} disabled={eStop || isPaused} />
+        </View>
+
+        {/* CENTER PANEL */}
+        <View style={s.centerPanel}>
+
+          {/* Sensor label + Radar */}
+          <View style={s.radarSection}>
+            <Text style={s.sensorLabel}>ULTRASONIC SENSOR</Text>
+            {/* marginTop reserves space for the floating status badge */}
+            <View style={s.radarWrapper}>
+              <RadarDisplay movement={movement} distance={distance} />
+            </View>
+          </View>
+
+          {/* Speed control */}
+          <View style={s.speedSection}>
+            <View style={s.speedHeader}>
+              <Text style={s.speedLabel}>SPEED</Text>
+              <Text style={s.speedValue}>{speed.toFixed(1)} m/s</Text>
+              <Text style={s.speedPct}>{speedPct}%</Text>
+            </View>
+            <View style={s.sliderRow}>
+              <TouchableOpacity onPress={() => adjustSpeed(-0.2)} style={s.sliderBtn} accessibilityLabel="Decrease speed">
+                <Ionicons name="remove" size={14} color={Colors.gray300} />
+              </TouchableOpacity>
+              <View style={s.sliderTrack}>
+                <View style={[s.sliderFill, { width: `${speedPct}%` as any }]} />
+              </View>
+              <TouchableOpacity onPress={() => adjustSpeed(0.2)} style={s.sliderBtn} accessibilityLabel="Increase speed">
+                <Ionicons name="add" size={14} color={Colors.gray300} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Quick controls */}
+          <View style={s.quickRow}>
+            <TouchableOpacity
+              style={[s.quickBtn, eStop && s.quickBtnRed]}
+              onPress={handleEStop}
+              accessibilityLabel="E-Stop toggle"
+            >
+              <Ionicons
+                name={eStop ? 'warning' : 'stop-circle-outline'}
+                size={13}
+                color={eStop ? Colors.red : Colors.gray300}
+              />
+              <Text style={[s.quickTxt, eStop && { color: Colors.red }]}>
+                {eStop ? 'RELEASE' : 'E-STOP'}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={s.quickBtn}
+              onPress={() => Alert.alert('Mode', 'Toggle demo / hardware mode.')}
+              accessibilityLabel="Mode"
+            >
+              <Ionicons name="swap-horizontal-outline" size={13} color={Colors.gray300} />
+              <Text style={s.quickTxt}>MODE</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={s.quickBtn} onPress={handleHorn} accessibilityLabel="Horn">
+              <Ionicons name="megaphone-outline" size={13} color={Colors.gray300} />
+              <Text style={s.quickTxt}>HORN</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* RIGHT PANEL ─ Action Buttons */}
+        <View style={s.sidePanel}>
+          <Text style={s.panelLabel}>ACTION</Text>
+          <ActionButtons
+            onStop={handleStop}
+            onPause={handlePause}
+            onHorn={handleHorn}
+            isPaused={isPaused}
+            eStop={eStop}
+            onEStop={handleEStop}
+          />
+        </View>
+
+      </View>
+    </View>
+  );
+}
+
+// ── Styles ───────────────────────────────────────────────────────────────
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#050E1F' },
+
+  // ── Top HUD bar
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,180,216,0.14)',
+    gap: 8,
+  },
+  backBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  backText: { fontSize: 11, color: Colors.gray300, fontWeight: '600' },
+  topCenter: { flex: 1, alignItems: 'center' },
+  appTitle: { fontSize: 13, fontWeight: '800', color: Colors.white, letterSpacing: 0.4 },
+  appSub: { fontSize: 9, color: Colors.gray300, letterSpacing: 0.2, marginTop: 1 },
+
+  // Pill row
+  pillRow: {
+    flexDirection: 'row',
+    gap: 5,
+    alignItems: 'center',
+    flexShrink: 1,
+  },
+  pill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  dot: { width: 5, height: 5, borderRadius: 3, marginRight: 4 },
+  pillTxt: { fontSize: 9, color: Colors.gray300 },
+
+  // ── Controller body
+  body: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    width: '100%',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
   },
-  dpadLeft: {},
-  dpadRight: {},
-  dpadStopBtn: {
-    width: 76,
-    height: 76,
-    borderRadius: 38,
-    backgroundColor: Colors.red,
+
+  // Side panels
+  sidePanel: {
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 3,
-    borderColor: '#FFF',
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.red,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.35,
-        shadowRadius: 8,
-      },
-      android: {
-        elevation: 6,
-      },
-    }),
+    gap: 10,
+    width: 176,
   },
-  dpadStopBtnActive: {
-    backgroundColor: '#C1121F',
+  panelLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: Colors.gray400,
+    letterSpacing: 2.5,
   },
-  stopBtnText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: Colors.white,
-    marginTop: 2,
-    letterSpacing: 0.5,
+
+  // ── Center panel
+  centerPanel: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 8,
   },
-  speedCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.gray100,
-    gap: 12,
+
+  // Radar section
+  radarSection: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  sensorLabel: {
+    fontSize: 8,
+    fontWeight: '700',
+    color: 'rgba(0,180,216,0.55)',
+    letterSpacing: 2,
+    textAlign: 'center',
+  },
+  // Extra top margin so the absolute-positioned status badge doesn't clip
+  radarWrapper: {
+    marginTop: 22,
+  },
+
+  // ── Speed section
+  speedSection: {
+    width: '80%',
+    gap: 5,
+    alignItems: 'stretch',
   },
   speedHeader: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    alignItems: 'center',
   },
-  speedTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  speedTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textPrimary,
+  speedLabel: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: Colors.gray400,
+    letterSpacing: 2,
   },
   speedValue: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: Colors.tealDark,
+    fontSize: 10,
+    fontWeight: '700',
+    color: Colors.teal,
   },
-  speedControlsRow: {
+  speedPct: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: Colors.gray300,
+  },
+  sliderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 6,
   },
-  speedBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: Colors.lightGray,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  speedBtnDisabled: {
-    opacity: 0.4,
-  },
-  speedTrack: {
+  sliderTrack: {
     flex: 1,
-    height: 8,
-    backgroundColor: Colors.gray100,
-    borderRadius: 4,
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 3,
     overflow: 'hidden',
   },
-  speedFill: {
+  sliderFill: {
     height: '100%',
     backgroundColor: Colors.teal,
-    borderRadius: 4,
+    borderRadius: 3,
   },
-  speedPresetsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  speedPresetPill: {
-    flex: 1,
-    paddingVertical: 6,
-    borderRadius: 10,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.gray200,
-    alignItems: 'center',
-  },
-  speedPresetPillActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  speedPresetText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: Colors.gray600,
-  },
-  speedPresetTextActive: {
-    color: Colors.white,
-  },
-  opsSection: {
-    gap: 10,
-  },
-  pauseBtn: {
-    flexDirection: 'row',
+  sliderBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.darkSecondary,
-    paddingVertical: 14,
-    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  resumeBtn: {
-    backgroundColor: Colors.tealDark,
-  },
-  pauseBtnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: Colors.white,
-  },
-  eStopBtn: {
+
+  // ── Quick-control row
+  quickRow: {
     flexDirection: 'row',
+    gap: 7,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.red,
-    paddingVertical: 16,
-    borderRadius: 14,
-    ...Platform.select({
-      ios: {
-        shadowColor: Colors.red,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.35,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
   },
-  eStopBtnTriggered: {
-    backgroundColor: '#8B0000',
-    borderWidth: 2,
-    borderColor: '#FFAAAA',
-  },
-  eStopBtnText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: Colors.white,
-    letterSpacing: 0.5,
-  },
-  hubGrid: {
+  quickBtn: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  hubCard: {
-    width: '48%',
-    backgroundColor: Colors.white,
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.gray100,
+    alignItems: 'center',
     gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  hubIconBg: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 4,
+  quickBtnRed: {
+    backgroundColor: 'rgba(239,35,60,0.15)',
+    borderColor: Colors.red,
   },
-  hubTitle: {
-    fontSize: 14,
+  quickTxt: {
+    fontSize: 9,
     fontWeight: '700',
-    color: Colors.textPrimary,
-  },
-  hubSubtitle: {
-    fontSize: 11,
-    color: Colors.gray500,
+    color: Colors.gray300,
+    letterSpacing: 0.6,
   },
 });

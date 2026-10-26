@@ -70,9 +70,15 @@ export default function TabLayout() {
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="robo"
+        options={{
+          title: 'Robo',
           tabBarIcon: ({ color, focused }) => (
-            <TabIcon name={focused ? 'person' : 'person-outline'} color={color} focused={focused} />
+            <TabIcon name={focused ? 'hardware-chip' : 'hardware-chip-outline'} color={color} focused={focused} />
           ),
         }}
       />

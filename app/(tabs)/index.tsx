@@ -115,8 +115,11 @@ const tips = [
 ];
 
 // ── Main Component ─────────────────────────────────────────────────────────────
+// Computed once at module level — Math.random() is not allowed inside render
+const INITIAL_TIP_INDEX = Math.floor(Math.random() * tips.length);
+
 export default function HomeScreen() {
-  const [tipIndex] = useState(Math.floor(Math.random() * tips.length));
+  const [tipIndex] = useState(INITIAL_TIP_INDEX);
 
   const currentHour = new Date().getHours();
   const greeting =
@@ -137,10 +140,10 @@ export default function HomeScreen() {
           style={styles.header}
         >
           <View style={styles.headerTop}>
-            <View>
+            <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} accessibilityLabel="View Profile">
               <Text style={styles.greeting}>{greeting},</Text>
               <Text style={styles.userName}>Ansil Mohamed 👋</Text>
-            </View>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.notifBtn}
               onPress={() => router.push('/notifications')}
@@ -267,30 +270,39 @@ export default function HomeScreen() {
         {/* ── Quick Actions ───────────────────────────────── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Quick Actions</Text>
-          <View style={styles.actionsGrid}>
-            {[
-              { label: 'Controller', icon: 'game-controller-outline', color: Colors.teal, route: '/robot-control' as const },
-              { label: 'Live Map', icon: 'map-outline', color: Colors.primaryLight, route: '/robot-location' as const },
-              { label: 'Robot Tasks', icon: 'file-tray-full-outline', color: Colors.green, route: '/robot-tasks' as const },
-              { label: 'Battery', icon: 'battery-charging-outline', color: Colors.orange, route: '/battery-monitor' as const },
-              { label: 'Book Visit', icon: 'calendar-outline', color: Colors.tealDark, route: '/(tabs)/appointments' as const },
-              { label: 'Log Vitals', icon: 'add-circle-outline', color: Colors.greenDark, route: '/(tabs)/vitals' as const },
-              { label: 'Medications', icon: 'medical-outline', color: Colors.orange, route: '/(tabs)/medications' as const },
-              { label: 'Emergency', icon: 'warning-outline', color: Colors.red, route: '/emergency' as const },
-            ].map((action, idx) => (
-              <TouchableOpacity
-                key={idx}
-                style={styles.actionCard}
-                onPress={() => router.push(action.route as any)}
-                accessibilityLabel={action.label}
-              >
-                <View style={[styles.actionIcon, { backgroundColor: action.color + '15' }]}>
-                  <Ionicons name={action.icon as any} size={26} color={action.color} />
-                </View>
-                <Text style={styles.actionLabel}>{action.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {/* 2 rows × 3 columns */}
+          {(() => {
+            const ACTIONS = [
+              { label: 'Controller',  icon: 'game-controller-outline', color: Colors.teal,     route: '/robot-control'          },
+              { label: 'Robot Tasks', icon: 'file-tray-full-outline',  color: Colors.green,    route: '/robot-tasks'            },
+              { label: 'Book Visit',  icon: 'calendar-outline',        color: Colors.tealDark, route: '/(tabs)/appointments'    },
+              { label: 'Log Vitals',  icon: 'add-circle-outline',      color: Colors.greenDark,route: '/(tabs)/vitals'          },
+              { label: 'Medications', icon: 'medical-outline',         color: Colors.orange,   route: '/(tabs)/medications'     },
+              { label: 'Emergency',   icon: 'warning-outline',         color: Colors.red,      route: '/emergency'              },
+            ];
+            const rows = [ACTIONS.slice(0, 3), ACTIONS.slice(3, 6)];
+            return (
+              <View style={styles.actionsGrid}>
+                {rows.map((row, ri) => (
+                  <View key={ri} style={styles.actionsRow}>
+                    {row.map((action, ci) => (
+                      <TouchableOpacity
+                        key={ci}
+                        style={styles.actionCard}
+                        onPress={() => router.push(action.route as any)}
+                        accessibilityLabel={action.label}
+                      >
+                        <View style={[styles.actionIcon, { backgroundColor: action.color + '15' }]}>
+                          <Ionicons name={action.icon as any} size={26} color={action.color} />
+                        </View>
+                        <Text style={styles.actionLabel}>{action.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            );
+          })()}
         </View>
 
         <View style={styles.bottomPad} />
@@ -477,8 +489,15 @@ const styles = StyleSheet.create({
   upcomingRight: { alignItems: 'flex-end', gap: 4 },
   upcomingTime: { fontSize: 11, color: Colors.teal, fontWeight: '600' },
 
-  // Quick Actions
-  actionsGrid: { flexDirection: 'row', gap: 12, marginTop: 14 },
+  // Quick Actions — strict 2 rows × 3 columns
+  actionsGrid: {
+    gap: 12,
+    marginTop: 14,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
   actionCard: {
     flex: 1,
     backgroundColor: Colors.backgroundCard,
